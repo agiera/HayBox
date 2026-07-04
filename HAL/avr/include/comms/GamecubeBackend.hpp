@@ -22,6 +22,10 @@ class GamecubeBackend : public CommunicationBackend {
     Gamecube_Data_t _data;
     int _delay;
     bool _nerfOn;
+
+    // Invoked from the Nintendo library when the final metadata chunk (0xB0
+    // sequence) is received. Persists the metadata to EEPROM.
+    static void OnMetadataWrite(void *context);
 };
 
 #endif

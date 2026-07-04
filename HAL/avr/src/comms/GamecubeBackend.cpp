@@ -7,8 +7,54 @@
 #include "modes/MeleeLimits.hpp"
 
 #include <Nintendo.h>
+#include <avr/eeprom.h>
+#include <avr/pgmspace.h>
+#include <string.h>
 
 //#define TIMINGDEBUG
+
+// Metadata persistence lives in EEPROM. The Nintendo library owns only the
+// transport buffer; this backend seeds it on boot and persists it from the
+// write-complete callback, mirroring the RP2040 backend.
+static constexpr uint8_t metadata_magic = 0x4d;
+
+static uint8_t EEMEM metadata_magic_ee;
+static uint8_t EEMEM metadata_chunks_ee;
+static uint8_t EEMEM metadata_data_ee[GC_METADATA_MAX_SIZE];
+
+static void build_haybox_default_metadata(uint8_t *metadata, uint8_t &chunks) {
+    // Default object as raw UBJSON: { U8"firmware" S U6"HayBox" }
+    static const uint8_t defaults[] PROGMEM = {
+        0x7B, 'U', 8, 'f', 'i', 'r', 'm', 'w', 'a', 'r', 'e',
+        'S', 'U', 6, 'H', 'a', 'y', 'B', 'o', 'x', 0x7D,
+    };
+    memset(metadata, 0, GC_METADATA_MAX_SIZE);
+    memcpy_P(metadata, defaults, sizeof(defaults));
+    chunks = 1;
+}
+
+static bool load_persisted_metadata(uint8_t *metadata, uint8_t &chunks) {
+    if (eeprom_read_byte(&metadata_magic_ee) != metadata_magic) {
+        return false;
+    }
+
+    uint8_t stored_chunks = eeprom_read_byte(&metadata_chunks_ee);
+    if (stored_chunks == 0 || stored_chunks > GC_METADATA_MAX_CHUNKS) {
+        return false;
+    }
+
+    chunks = stored_chunks;
+    eeprom_read_block(metadata, metadata_data_ee, GC_METADATA_MAX_SIZE);
+    return true;
+}
+
+static void save_persisted_metadata(const uint8_t *metadata, uint8_t chunks) {
+    // eeprom_update_* skips bytes that already match, so an unchanged save costs
+    // no wear and returns quickly.
+    eeprom_update_block(metadata, metadata_data_ee, GC_METADATA_MAX_SIZE);
+    eeprom_update_byte(&metadata_chunks_ee, chunks);
+    eeprom_update_byte(&metadata_magic_ee, metadata_magic);
+}
 
 GamecubeBackend::GamecubeBackend(
     InputSource **input_sources,
@@ -19,6 +65,17 @@ GamecubeBackend::GamecubeBackend(
     : CommunicationBackend(input_sources, input_source_count) {
     _gamecube = new CGamecubeConsole(data_pin);
     _data = defaultGamecubeData;
+
+    // Fill the library's transport buffer in place: read persisted metadata
+    // straight into it, or build+save defaults, avoiding any extra copy/stack.
+    uint8_t *metadata = _gamecube->MetadataBuffer();
+    uint8_t chunks;
+    if (!load_persisted_metadata(metadata, chunks)) {
+        build_haybox_default_metadata(metadata, chunks);
+        save_persisted_metadata(metadata, chunks);
+    }
+    _gamecube->SetMetadataChunks(chunks);
+    _gamecube->SetMetadataWriteCallback(&GamecubeBackend::OnMetadataWrite, this);
 
     if (polling_rate > 0) {
         // Delay used between input updates to postpone them until right before the
@@ -233,4 +290,20 @@ void GamecubeBackend::SendReport() {
 #ifdef TIMINGDEBUG
     digitalWrite(21, LOW);
 #endif
+}
+
+void GamecubeBackend::OnMetadataWrite(void *context) {
+    GamecubeBackend *self = static_cast<GamecubeBackend *>(context);
+
+    // Called once the final 0xB0 chunk lands. The Nintendo library advertises a
+    // chunk count of 0 while a multi-chunk write is still in flight and the real
+    // count only once the final chunk arrives, so reaching here means the full
+    // object is present and we persist exactly once per write. Metadata writes
+    // are infrequent, so the brief EEPROM stall here is acceptable.
+    uint8_t chunks = self->_gamecube->GetMetadataChunks();
+    if (chunks == 0) {
+        return;
+    }
+
+    save_persisted_metadata(self->_gamecube->MetadataBuffer(), chunks);
 }

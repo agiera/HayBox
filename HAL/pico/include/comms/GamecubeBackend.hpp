@@ -25,6 +25,10 @@ class GamecubeBackend : public CommunicationBackend {
     GamecubeConsole *_gamecube;
     gc_report_t _report;
     bool _nerfOn;
+
+    // Invoked from GamecubeConsole when the final metadata chunk (0xB0
+    // sequence) is received. Persists the metadata to flash.
+    static void OnMetadataWrite(void *context);
 };
 
 #endif
