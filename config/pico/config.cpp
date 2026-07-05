@@ -3,6 +3,7 @@
 #include "comms/GamecubeBackend.hpp"
 #include "comms/N64Backend.hpp"
 #include "comms/NintendoSwitchBackend.hpp"
+#include "comms/WebUSBBackend.hpp"
 #include "comms/XInputBackend.hpp"
 #include "config/mode_selection.hpp"
 #include "core/CommunicationBackend.hpp"
@@ -254,7 +255,18 @@ void setup() {
     /* Select communication backend. */
     CommunicationBackend *primary_backend;
     if (console == ConnectedConsole::NONE) {
-        if (button_holds.x) {
+        if (button_holds.y) {
+            // If no console detected and Y is held on plugin, boot into the
+            // WebUSB single-port GameCube adapter mode so the browser metadata
+            // host can read/write this controller's GC metadata over USB.
+            backend_count = 1;
+            primary_backend = new WebUSBBackend(input_sources, input_source_count);
+            backends = new CommunicationBackend *[backend_count] { primary_backend };
+
+            // A game mode is still required for select_mode()/loop().
+            primary_backend->SetGameMode(new Melee20Button(socd::SOCD_2IP_NO_REAC));
+            return;
+        } else if (button_holds.x) {
             // If no console detected and X is held on plugin then use Switch USB backend.
             NintendoSwitchBackend::RegisterDescriptor();
             backend_count = 1;
