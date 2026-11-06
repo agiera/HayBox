@@ -3,7 +3,7 @@
 #include "comms/GamecubeBackend.hpp"
 #include "comms/N64Backend.hpp"
 #include "comms/NintendoSwitchBackend.hpp"
-#include "comms/WebUSBBackend.hpp"
+#include "comms/GcAdapterUsb.hpp"
 #include "comms/XInputBackend.hpp"
 #include "config/mode_selection.hpp"
 #include "core/CommunicationBackend.hpp"
@@ -91,10 +91,12 @@ void setup() {
     if (console == ConnectedConsole::NONE) {
         if (button_holds.y) {
             // If no console detected and Y is held on plugin, boot into the
-            // WebUSB single-port GameCube adapter mode so the browser metadata
-            // host can read/write this controller's GC metadata over USB.
+            // single-port GameCube adapter mode: the controller registers
+            // directly as an adapter (no XInput) so Dolphin can connect it,
+            // and the browser metadata host can read/write the controller's
+            // GC metadata over USB.
             backend_count = 1;
-            primary_backend = new WebUSBBackend(input_sources, input_source_count);
+            primary_backend = new GcAdapterUsbBackend(input_sources, input_source_count);
             backends = new CommunicationBackend *[backend_count] { primary_backend };
 
             // A game mode is still required for select_mode()/loop().
